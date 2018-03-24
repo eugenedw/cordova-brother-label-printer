@@ -11,12 +11,14 @@ import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.util.Base64;
 import android.util.Log;
+import android.os.Build;
 
 import com.brother.ptouch.sdk.LabelInfo;
 import com.brother.ptouch.sdk.NetPrinter;
 import com.brother.ptouch.sdk.Printer;
 import com.brother.ptouch.sdk.PrinterInfo;
 import com.brother.ptouch.sdk.PrinterStatus;
+import com.brother.ptouch.sdk.PrinterInfo.ErrorCode;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
@@ -153,6 +155,82 @@ public class BrotherPrinter extends CordovaPlugin {
             e.printStackTrace();
             return null;
         }
+    }
+
+    private void printPdf(final JSONArray args, final CallbackContext callbackctx) {
+
+        final String filepath = args.optString(0,null);
+
+        if(!searched){
+            PluginResult result;
+            result = new PluginResult(PluginResult.Status.ERROR, "You must first run findNetworkPrinters() to search the network.");
+            callbackctx.sendPluginResult(result);
+        }
+
+        if(!found){
+            PluginResult result;
+            result = new PluginResult(PluginResult.Status.ERROR, "No printer was found. Aborting.");
+            callbackctx.sendPluginResult(result);
+        }
+
+        cordova.getThreadPool().execute(new Runnable() {
+            public void run() {
+                try{
+
+                    Printer myPrinter = new Printer();
+
+                    //get the total number of pages in the PDF
+                    int totalpages = 0;
+                    if (Build.VERSION.SDK_INT < 21) {
+                        totalpages = myPrinter.getPDFPages(filepath);
+                    } else {
+                        totalpages = myPrinter.getPDFFilePages(filepath);
+                    }
+
+                    PrinterInfo myPrinterInfo = myPrinter.getPrinterInfo();
+
+                    myPrinterInfo.printerModel  = PrinterInfo.Model.QL_720NW;
+                    myPrinterInfo.port          = PrinterInfo.Port.NET;
+                    myPrinterInfo.printMode     = PrinterInfo.PrintMode.ORIGINAL;
+                    myPrinterInfo.orientation   = PrinterInfo.Orientation.PORTRAIT;
+                    myPrinterInfo.paperSize     = PrinterInfo.PaperSize.CUSTOM;
+                    myPrinterInfo.ipAddress     = ipAddress;
+                    myPrinterInfo.macAddress    = macAddress;
+                    //this may need to be parameterized via options arguments
+                    myPrinterInfo.labelNameIndex = LabelInfo.QL700.valueOf("W62H100").ordinal();
+                    myPrinterInfo.isAutoCut = true;
+                    myPrinterInfo.isCutAtEnd = true;
+
+                    myPrinter.setPrinterInfo(myPrinterInfo);
+
+                    PrinterStatus status = new PrinterStatus();
+
+                    for (int i = 0; i < totalpages; i++) {
+                        if (Build.VERSION.SDK_INT < 21) {
+                            status = myPrinter.printPDF(filepath, i+1);
+                        } else {
+                            status = myPrinter.printPdfFile(filepath, i+1);
+
+                        }
+                        if (status.errorCode != ErrorCode.ERROR_NONE) {
+                            break;
+                        }
+                    }
+
+                    //casting to string doesn't work, but this does... wtf Brother
+                    String status_code = ""+status.errorCode;
+
+                    Log.d(TAG, "PrinterStatus: "+status_code);
+
+                    PluginResult result;
+                    result = new PluginResult(PluginResult.Status.OK, status_code);
+                    callbackctx.sendPluginResult(result);
+
+                }catch(Exception e){
+                    e.printStackTrace();
+                }
+            }
+        });
     }
 
     private void printViaSDK(final JSONArray args, final CallbackContext callbackctx) {
