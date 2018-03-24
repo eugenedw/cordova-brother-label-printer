@@ -16,7 +16,7 @@ BrotherPrinter.prototype = {
     },
     printPdf: function (data, callback) {
         if (!data || !data.length) {
-            console.log('No data passed in. Expects a bitmap.')
+            console.log('No data passed in. Expects a file path to locally saved PDF.')
             return
         }
         cordova.exec(callback, function(err){console.log('error: '+err)}, 'BrotherPrinter', 'printPdf', [data])
