@@ -61,6 +61,11 @@ public class BrotherPrinter extends CordovaPlugin {
             return true;
         }
 
+        if ("printPdf".equals(action)) {
+            printPdf(args, callbackContext);
+            return true;
+        }
+
         if ("sendUSBConfig".equals(action)) {
             sendUSBConfig(args, callbackContext);
             return true;
