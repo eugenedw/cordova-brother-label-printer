@@ -9,16 +9,16 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
+import android.os.Build;
 import android.util.Base64;
 import android.util.Log;
-import android.os.Build;
 
 import com.brother.ptouch.sdk.LabelInfo;
 import com.brother.ptouch.sdk.NetPrinter;
 import com.brother.ptouch.sdk.Printer;
 import com.brother.ptouch.sdk.PrinterInfo;
-import com.brother.ptouch.sdk.PrinterStatus;
 import com.brother.ptouch.sdk.PrinterInfo.ErrorCode;
+import com.brother.ptouch.sdk.PrinterStatus;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
@@ -30,34 +30,69 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ *   BrotherPrinter - cordova plugin providing access to networked printers
+ *
+ *   - updated March 24, 2018
+ *     > added method for searching printers
+ *     > implemented PDF printing
+ *     > supplied updated printer list based upon latest Brother SDK (3.0.9)
+ *     > introduced Javadoc
+ */
 public class BrotherPrinter extends CordovaPlugin {
 
-    String modelName = "QL-720NW";
-    private NetPrinter[] netPrinters;
+    //Holds the name of the valid network printers to discover during search
+    private static final String[] modelNames = {"710W","720NW","800","810W","820NWB","QL-710W","QL-720NW","QL-800","QL-800W","QL-820NWB"};
 
-    private String ipAddress   = null;
-    private String macAddress  = null;
-    private Boolean searched   = false;
-    private Boolean found      = false;
+    //Holds valid paper sizes for the QL series printers
+    private static final String[] PS_QL = {"W17H54", "W17H87", "W23H23", "W29H42", "W29H90", "W38H90", "W39H48", "W52H29", "W54H29", "W62H29", "W62H100", "W60H86", "W12", "W29", "W38", "W50", "W54", "W62", "W62RB"};
 
-    //token to make it easy to grep logcat
-    private static final String TAG = "print";
+    //Holds the map of NetPrinter objects available based upon the search operation, keyed by their serial number
+    private Map<String,Map<String,String>> discoveredNetworkPrinters;
 
+    //Holds the NetPrinter (converted to a Map object) selected during search
+    private Map<String,String> selectedPrinter;
+
+    //Holds the token to make it easy to grep logcat
+    private static final String TAG = "[BrotherPrinter Plugin]";
+
+    //the callback context through which responses to plugin requests should be sent
     private CallbackContext callbackctx;
 
+    /**
+     * entry point to the plugin from the cordova context
+     *
+     * @param action the method to trigger
+     * @param args the JSON array of arguments to pass to the requested method
+     * @param callbackContext the context through which results from the requested method should be passed
+     *
+     * @throws JSONException if the arguments are not compatible (TODO: clarify this doc entry)
+     *
+     */
     @Override
     public boolean execute (String action, JSONArray args, CallbackContext callbackContext) throws JSONException {
 
         if ("findNetworkPrinters".equals(action)) {
-            findNetworkPrinters(callbackContext);
+            findNetworkPrinters(args, callbackContext);
+            return true;
+        }
+
+        if ("setSessionPrinter".equals(action)) {
+            setSessionPrinter(args, callbackContext);
             return true;
         }
 
         if ("printViaSDK".equals(action)) {
-            printViaSDK(args, callbackContext);
+            printBitmapImage(args, callbackContext);
+            return true;
+        }
+
+        if ("printBitmapImage".equals(action)) {
+            printBitmapImage(args, callbackContext);
             return true;
         }
 
@@ -74,72 +109,108 @@ public class BrotherPrinter extends CordovaPlugin {
         return false;
     }
 
+    /**
+     *  utility method used to process printer search using @link #modelNames provided
+     *
+     *  @return an array of printers that were found
+     */
     private NetPrinter[] enumerateNetPrinters() {
         Printer myPrinter = new Printer();
         PrinterInfo myPrinterInfo = new PrinterInfo();
-        netPrinters = myPrinter.getNetPrinters(modelName);
-        return netPrinters;
+        NetPrinter[] _netPrinters = myPrinter.getNetPrinters(modelNames);
+        return _netPrinters;
     }
 
-    private void findNetworkPrinters(final CallbackContext callbackctx) {
+    /**
+     *  uses the provided serial number to set the session printer from list of NetPrinter objects discovered
+     *
+     *  @param args JSONArray containing the serial number of the printer to select
+     *  @param callbackctx the context provided by the method invoking this request
+     *
+     */
+    private void setSessionPrinter(final JSONArray args, final CallbackContext callbackctx){
+
+        final String serialnumber = args.optString(0,null);
+
+        if( serialnumber != null && discoveredNetworkPrinters != null ){
+            //check for printer serial number in the list of found printers
+            this.selectedPrinter = discoveredNetworkPrinters.get(serialnumber);
+        }
+
+        cordova.getThreadPool().execute(new Runnable() {
+            public void run() {
+                try{
+                    PluginResult result;
+                    if( selectedPrinter == null ){
+                        String message = "No printers found with the serial number provided.";
+                        if( discoveredNetworkPrinters == null || discoveredNetworkPrinters.size() == 0 ){
+                            message = "No printers were discovered with findNetworkPrinters() method.";
+                        }
+                        result = new PluginResult(PluginResult.Status.ERROR, message);
+                    }
+                    else{
+                        result = new PluginResult(PluginResult.Status.OK, "printer set");
+                    }
+                    callbackctx.sendPluginResult(result);
+                }catch(Exception e){
+                    e.printStackTrace();
+                }
+            }
+        });
+
+    }
+
+    /**
+     * searches the network for a printer matching those deemed valid for the plugin (contained in {@link #modelNames})
+     *
+     * @param callbackctx the context provided by the method invoking this request
+     */
+    private void findNetworkPrinters(final JSONArray args, final CallbackContext callbackctx) {
 
         cordova.getThreadPool().execute(new Runnable() {
             public void run() {
                 try{
 
-                    searched = true;
+                    NetPrinter[] _netPrinters = enumerateNetPrinters();
+                    int totalPrinters = 0;
 
-                    NetPrinter[] netPrinters = enumerateNetPrinters();
-                    int netPrinterCount = netPrinters.length;
+                    if( _netPrinters != null && _netPrinters.length > 0 ){
 
-                    ArrayList<Map> netPrintersList = null;
-                    if(netPrintersList != null) netPrintersList.clear();
-                    netPrintersList = new ArrayList<Map>();
-
-                    if (netPrinterCount > 0) {
-                        found = true;
                         Log.d(TAG, "---- network printers found! ----");
 
-                        for (int i = 0; i < netPrinterCount; i++) {
-                            Map<String, String> netPrinter = new HashMap<String, String>();
+                        totalPrinters = _netPrinters.length;
+                        discoveredNetworkPrinters = new HashMap<String,Map<String,String>>();
+                        ArrayList<NetPrinter> netPrintersList = new ArrayList<NetPrinter>(Arrays.asList(_netPrinters));
+                        for( NetPrinter np : netPrintersList ){
 
-                            ipAddress = netPrinters[i].ipAddress;
-                            macAddress = netPrinters[i].macAddress;
+                            Map<String,String> _printer = new HashMap<String,String>();
+                            _printer.put("ipAddress", np.ipAddress);
+                            _printer.put("macAddress", np.macAddress);
+                            _printer.put("serNo", np.serNo);
+                            _printer.put("nodeName", np.nodeName);
+                            _printer.put("paperName","W62H100");
+                            _printer.put("paperNameArray",Arrays.toString(PS_QL));
+                            discoveredNetworkPrinters.put(np.serNo,_printer);
 
-                            netPrinter.put("ipAddress", netPrinters[i].ipAddress);
-                            netPrinter.put("macAddress", netPrinters[i].macAddress);
-                            netPrinter.put("serNo", netPrinters[i].serNo);
-                            netPrinter.put("nodeName", netPrinters[i].nodeName);
-
-                            netPrintersList.add(netPrinter);
-
-                            Log.d(TAG,
-                                    " idx:    " + Integer.toString(i)
-                                            + "\n model:  " + netPrinters[i].modelName
-                                            + "\n ip:     " + netPrinters[i].ipAddress
-                                            + "\n mac:    " + netPrinters[i].macAddress
-                                            + "\n serial: " + netPrinters[i].serNo
-                                            + "\n name:   " + netPrinters[i].nodeName
+                            Log.d(TAG, "model:  " + np.modelName
+                                        + "\n ip:     " + np.ipAddress
+                                        + "\n mac:    " + np.macAddress
+                                        + "\n serial: " + np.serNo
+                                        + "\n name:   " + np.nodeName
                             );
-                        }
+
+                        };
 
                         Log.d(TAG, "---- /network printers found! ----");
-
-                    }else if (netPrinterCount == 0 ) {
-                        found = false;
-                        Log.d(TAG, "!!!! No network printers found !!!!");
+                    }
+                    else{
+                        //no network printers could be found based upon the modelNames search parameter supplied
+                        Log.d(TAG, "!!!! No compatible network printers found !!!!");
                     }
 
-                    JSONArray args = new JSONArray();
-                    PluginResult result;
-
-                    Boolean available = netPrinterCount > 0;
-
-                    args.put(available);
-                    args.put(netPrintersList);
-
-                    result = new PluginResult(PluginResult.Status.OK, args);
-
+                    args.put(totalPrinters);
+                    args.put(discoveredNetworkPrinters);
+                    PluginResult result = new PluginResult(PluginResult.Status.OK, args);
                     callbackctx.sendPluginResult(result);
 
                 }catch(Exception e){
@@ -152,6 +223,13 @@ public class BrotherPrinter extends CordovaPlugin {
 
     }
 
+    /**
+     *  utility method to create a bitmap from a base64 string
+     *
+     *  @param base64 the string to convert to an image
+     *  @param callbackctx the context provided by the method invoking this request
+     *  @return a bitmap {@see android.graphics.Bitmap} image
+     */
     public static Bitmap bmpFromBase64(String base64, final CallbackContext callbackctx){
         try{
             byte[] bytes = Base64.decode(base64, Base64.DEFAULT);
@@ -162,19 +240,32 @@ public class BrotherPrinter extends CordovaPlugin {
         }
     }
 
+    /**
+     *  prints a PDF using a file path provided and defined printer
+     *
+     *  @param args JSONArray containing the filepath string and printer object to use
+     *  @param callbackctx the context provided by the method invoking this request
+     */
     private void printPdf(final JSONArray args, final CallbackContext callbackctx) {
 
         final String filepath = args.optString(0,null);
+        final String serialnumber = args.optString(1,null);
+        final String paperName = args.optString(2,null);
 
-        if(!searched){
-            PluginResult result;
-            result = new PluginResult(PluginResult.Status.ERROR, "You must first run findNetworkPrinters() to search the network.");
-            callbackctx.sendPluginResult(result);
+        if( serialnumber != null && discoveredNetworkPrinters != null ){
+            //check for printer serial number in the list of found printers
+            //this assumes the user is overriding any prior session printer that may have been selected
+            this.selectedPrinter = discoveredNetworkPrinters.get(serialnumber);
         }
 
-        if(!found){
+        //user may have supplied a paper name manually
+        if( paperName != null && this.selectedPrinter != null ){
+            this.selectedPrinter.put("paperName",paperName);
+        }
+
+        if(this.selectedPrinter == null){
             PluginResult result;
-            result = new PluginResult(PluginResult.Status.ERROR, "No printer was found. Aborting.");
+            result = new PluginResult(PluginResult.Status.ERROR, "No printers have been selected. You must first run findNetworkPrinters() to search the network.");
             callbackctx.sendPluginResult(result);
         }
 
@@ -184,6 +275,24 @@ public class BrotherPrinter extends CordovaPlugin {
 
                     Printer myPrinter = new Printer();
 
+                    PrinterInfo myPrinterInfo = myPrinter.getPrinterInfo();
+
+                    myPrinterInfo.printerModel  = PrinterInfo.Model.QL_720NW;
+                    myPrinterInfo.port          = PrinterInfo.Port.NET;
+                    myPrinterInfo.printMode     = PrinterInfo.PrintMode.ORIGINAL;
+                    myPrinterInfo.orientation   = PrinterInfo.Orientation.PORTRAIT;
+                    myPrinterInfo.paperSize     = PrinterInfo.PaperSize.CUSTOM;
+                    myPrinterInfo.ipAddress     = selectedPrinter.get("ipAddress");
+                    myPrinterInfo.macAddress    = selectedPrinter.get("macAddress");
+                    myPrinterInfo.isAutoCut     = true;
+                    myPrinterInfo.isCutAtEnd    = true;
+
+                    myPrinterInfo.labelNameIndex = LabelInfo.QL700.valueOf(selectedPrinter.get("paperName")).ordinal();
+
+                    myPrinter.setPrinterInfo(myPrinterInfo);
+
+                    PrinterStatus status = new PrinterStatus();
+
                     //get the total number of pages in the PDF
                     int totalpages = 0;
                     if (Build.VERSION.SDK_INT < 21) {
@@ -192,37 +301,18 @@ public class BrotherPrinter extends CordovaPlugin {
                         totalpages = myPrinter.getPDFFilePages(filepath);
                     }
 
-                    PrinterInfo myPrinterInfo = myPrinter.getPrinterInfo();
-
-                    myPrinterInfo.printerModel  = PrinterInfo.Model.QL_720NW;
-                    myPrinterInfo.port          = PrinterInfo.Port.NET;
-                    myPrinterInfo.printMode     = PrinterInfo.PrintMode.ORIGINAL;
-                    myPrinterInfo.orientation   = PrinterInfo.Orientation.PORTRAIT;
-                    myPrinterInfo.paperSize     = PrinterInfo.PaperSize.CUSTOM;
-                    myPrinterInfo.ipAddress     = ipAddress;
-                    myPrinterInfo.macAddress    = macAddress;
-                    //this may need to be parameterized via options arguments
-                    myPrinterInfo.labelNameIndex = LabelInfo.QL700.valueOf("W62H100").ordinal();
-                    myPrinterInfo.isAutoCut = true;
-                    myPrinterInfo.isCutAtEnd = true;
-
-                    myPrinter.setPrinterInfo(myPrinterInfo);
-
-                    PrinterStatus status = new PrinterStatus();
-
                     for (int i = 0; i < totalpages; i++) {
                         if (Build.VERSION.SDK_INT < 21) {
                             status = myPrinter.printPDF(filepath, i+1);
                         } else {
                             status = myPrinter.printPdfFile(filepath, i+1);
-
                         }
                         if (status.errorCode != ErrorCode.ERROR_NONE) {
                             break;
                         }
                     }
 
-                    //casting to string doesn't work, but this does... wtf Brother
+                    //converting the enum ErrorCode object to a string for debugging
                     String status_code = ""+status.errorCode;
 
                     Log.d(TAG, "PrinterStatus: "+status_code);
@@ -238,19 +328,33 @@ public class BrotherPrinter extends CordovaPlugin {
         });
     }
 
-    private void printViaSDK(final JSONArray args, final CallbackContext callbackctx) {
+    /**
+     *  prints a BMP image using the base64 string representing the file contents
+     *
+     *  @param args JSONArray containing the filepath string and printer object to use
+     *  @param callbackctx the context provided by the method invoking this request
+     *
+     */
+    private void printBitmapImage(final JSONArray args, final CallbackContext callbackctx) {
 
         final Bitmap bitmap = bmpFromBase64(args.optString(0, null), callbackctx);
+        final String serialnumber = args.optString(1,null);
+        final String paperName = args.optString(2,null);
 
-        if(!searched){
-            PluginResult result;
-            result = new PluginResult(PluginResult.Status.ERROR, "You must first run findNetworkPrinters() to search the network.");
-            callbackctx.sendPluginResult(result);
+        if( serialnumber != null && discoveredNetworkPrinters != null ){
+            //check for printer serial number in the list of found printers
+            //this assumes the user is overriding any prior session printer that may have been selected
+            this.selectedPrinter = discoveredNetworkPrinters.get(serialnumber);
         }
 
-        if(!found){
+        //user may have supplied a paper name manually
+        if( paperName != null && this.selectedPrinter != null ){
+            this.selectedPrinter.put("paperName",paperName);
+        }
+
+        if(this.selectedPrinter == null){
             PluginResult result;
-            result = new PluginResult(PluginResult.Status.ERROR, "No printer was found. Aborting.");
+            result = new PluginResult(PluginResult.Status.ERROR, "No printers have been selected. You must first run findNetworkPrinters() to search the network.");
             callbackctx.sendPluginResult(result);
         }
 
@@ -268,18 +372,19 @@ public class BrotherPrinter extends CordovaPlugin {
                     myPrinterInfo.printMode     = PrinterInfo.PrintMode.ORIGINAL;
                     myPrinterInfo.orientation   = PrinterInfo.Orientation.PORTRAIT;
                     myPrinterInfo.paperSize     = PrinterInfo.PaperSize.CUSTOM;
-                    myPrinterInfo.ipAddress     = ipAddress;
-                    myPrinterInfo.macAddress    = macAddress;
+                    myPrinterInfo.ipAddress     = selectedPrinter.get("ipAddress");
+                    myPrinterInfo.macAddress    = selectedPrinter.get("macAddress");
+                    myPrinterInfo.isAutoCut     = true;
+                    myPrinterInfo.isCutAtEnd    = true;
+
                     //this may need to be parameterized via options arguments
-                    myPrinterInfo.labelNameIndex = LabelInfo.QL700.valueOf("W62H100").ordinal();
-                    myPrinterInfo.isAutoCut = true;
-                    myPrinterInfo.isCutAtEnd = true;
+                    myPrinterInfo.labelNameIndex = LabelInfo.QL700.valueOf(selectedPrinter.get("paperName")).ordinal();
 
                     myPrinter.setPrinterInfo(myPrinterInfo);
 
                     PrinterStatus status = myPrinter.printImage(bitmap);
 
-                    //casting to string doesn't work, but this does... wtf Brother
+                    //converting the enum ErrorCode object to a string for debugging
                     String status_code = ""+status.errorCode;
 
                     Log.d(TAG, "PrinterStatus: "+status_code);
@@ -296,6 +401,13 @@ public class BrotherPrinter extends CordovaPlugin {
     }
 
 
+    /**
+     *  captures the USB configuration settings for the attached printers
+     *
+     *  TODO provide clarification as to what this method does
+     *  @param args JSONArray containing parameters
+     *  @param callbackctx the context provided by the method invoking this request
+     */
     private void sendUSBConfig(final JSONArray args, final CallbackContext callbackctx){
 
         cordova.getThreadPool().execute(new Runnable() {

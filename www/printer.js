@@ -7,19 +7,33 @@ BrotherPrinter.prototype = {
         }
         cordova.exec(callbackFn, null, 'BrotherPrinter', 'findNetworkPrinters', [])
     },
-    printViaSDK: function (data, callback) {
+    setSessionPrinter: function (data, callback) {
+        if (!data || !data.length) {
+            console.log('No data passed in. Expects a string representing the serial number.')
+            return
+        }
+        cordova.exec(callback, function(err){console.log('error: '+err)}, 'BrotherPrinter', 'setSessionPrinter', [data])
+    },
+    printPdf: function( data, callback ){
+        if( !data || !data.length ){
+          console.log("No path for the pdf was specified");
+          return;
+        }
+        cordova.exec(callback, function(err){ console.log('error: '+err)}, 'BrotherPrinter', 'printPdf', [data]);
+    },
+    printBitmapImage: function (data, callback) {
         if (!data || !data.length) {
             console.log('No data passed in. Expects a bitmap.')
             return
         }
         cordova.exec(callback, function(err){console.log('error: '+err)}, 'BrotherPrinter', 'printViaSDK', [data])
     },
-    printPdf: function (data, callback) {
+    printViaSDK: function (data, callback) {
         if (!data || !data.length) {
-            console.log('No data passed in. Expects a file path to locally saved PDF.')
+            console.log('No data passed in. Expects a bitmap.')
             return
         }
-        cordova.exec(callback, function(err){console.log('error: '+err)}, 'BrotherPrinter', 'printPdf', [data])
+        cordova.exec(callback, function(err){console.log('error: '+err)}, 'BrotherPrinter', 'printViaSDK', [data])
     },
     sendUSBConfig: function (data, callback) {
         if (!data || !data.length) {
