@@ -14,19 +14,40 @@ BrotherPrinter.prototype = {
         }
         cordova.exec(callback, function(err){console.log('error: '+err)}, 'BrotherPrinter', 'setSessionPrinter', [data])
     },
-    printPdf: function( data, callback ){
-        if( !data || !data.length ){
+    printPdf: function( options, callback ){
+
+        if( !options || options.file === undefined ){
           console.log("No path for the pdf was specified");
           return;
         }
-        cordova.exec(callback, function(err){ console.log('error: '+err)}, 'BrotherPrinter', 'printPdf', [data]);
+
+        var args = [options.file];
+        if( options.printer !== undefined ){
+          args.push("printer:" + options.printer);
+        }
+        if( options.paper !== undefined ){
+          args.push("paper:" + options.paper);
+        }
+
+        cordova.exec(callback, function(err){ console.log('error: '+err)}, 'BrotherPrinter', 'printPdf', args);
     },
-    printBitmapImage: function (data, callback) {
-        if (!data || !data.length) {
-            console.log('No data passed in. Expects a bitmap.')
+    printBitmapImage: function (options, callback) {
+
+        if (!options || options.image === undefined) {
+            console.log('No data passed in. Expects a bitmap (base64).')
             return
         }
-        cordova.exec(callback, function(err){console.log('error: '+err)}, 'BrotherPrinter', 'printViaSDK', [data])
+
+        var args = [options.image];
+        if( options.printer !== undefined ){
+          args.push("printer:" + options.printer);
+        }
+        if( options.paper !== undefined ){
+          args.push("paper:" + options.paper);
+        }
+
+        cordova.exec(callback, function(err){console.log('error: '+err)}, 'BrotherPrinter', 'printViaSDK', args)
+
     },
     printViaSDK: function (data, callback) {
         if (!data || !data.length) {

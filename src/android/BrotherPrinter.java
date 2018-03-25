@@ -24,6 +24,7 @@ import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
 import org.apache.cordova.PluginResult;
 import org.json.JSONArray;
+import org.json.JSONObject;
 import org.json.JSONException;
 
 import java.io.File;
@@ -209,7 +210,7 @@ public class BrotherPrinter extends CordovaPlugin {
                     }
 
                     args.put(totalPrinters);
-                    args.put(discoveredNetworkPrinters);
+                    args.put((new JSONObject(discoveredNetworkPrinters)).toString());
                     PluginResult result = new PluginResult(PluginResult.Status.OK, args);
                     callbackctx.sendPluginResult(result);
 
@@ -249,18 +250,22 @@ public class BrotherPrinter extends CordovaPlugin {
     private void printPdf(final JSONArray args, final CallbackContext callbackctx) {
 
         final String filepath = args.optString(0,null);
-        final String serialnumber = args.optString(1,null);
-        final String paperName = args.optString(2,null);
+        final String param1 = args.optString(1,null);
+        final String param2 = args.optString(2,null);
 
-        if( serialnumber != null && discoveredNetworkPrinters != null ){
+        if( param1 != null && param1.startsWith("printer")
+                                    && discoveredNetworkPrinters != null ){
             //check for printer serial number in the list of found printers
             //this assumes the user is overriding any prior session printer that may have been selected
-            this.selectedPrinter = discoveredNetworkPrinters.get(serialnumber);
+            this.selectedPrinter = discoveredNetworkPrinters.get(param1.split(":")[1].trim());
         }
 
         //user may have supplied a paper name manually
-        if( paperName != null && this.selectedPrinter != null ){
-            this.selectedPrinter.put("paperName",paperName);
+        if( param1 != null && param1.startsWith("paper") ){
+            this.selectedPrinter.put("paperName",param1.split(":")[1].trim());
+        }
+        else if( param2 != null ){
+            this.selectedPrinter.put("paperName",param2.split(":")[1].trim());
         }
 
         if(this.selectedPrinter == null){
@@ -338,18 +343,22 @@ public class BrotherPrinter extends CordovaPlugin {
     private void printBitmapImage(final JSONArray args, final CallbackContext callbackctx) {
 
         final Bitmap bitmap = bmpFromBase64(args.optString(0, null), callbackctx);
-        final String serialnumber = args.optString(1,null);
-        final String paperName = args.optString(2,null);
+        final String param1 = args.optString(1,null);
+        final String param2 = args.optString(2,null);
 
-        if( serialnumber != null && discoveredNetworkPrinters != null ){
+        if( param1 != null && param1.startsWith("printer")
+                                    && discoveredNetworkPrinters != null ){
             //check for printer serial number in the list of found printers
             //this assumes the user is overriding any prior session printer that may have been selected
-            this.selectedPrinter = discoveredNetworkPrinters.get(serialnumber);
+            this.selectedPrinter = discoveredNetworkPrinters.get(param1.split(":")[1].trim());
         }
 
         //user may have supplied a paper name manually
-        if( paperName != null && this.selectedPrinter != null ){
-            this.selectedPrinter.put("paperName",paperName);
+        if( param1 != null && param1.startsWith("paper") ){
+            this.selectedPrinter.put("paperName",param1.split(":")[1].trim());
+        }
+        else if( param2 != null ){
+            this.selectedPrinter.put("paperName",param2.split(":")[1].trim());
         }
 
         if(this.selectedPrinter == null){
